@@ -7,6 +7,7 @@ import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 import {RiscZeroGroth16Verifier} from "risc0/groth16/RiscZeroGroth16Verifier.sol";
 import {ControlID} from "risc0/groth16/ControlID.sol";
 
+import {CA_Storage} from "../contracts/CA_Storage.sol";
 import {CfWallet} from "../contracts/CfWallet.sol";
 
 /// @notice Deployment script for the RISC Zero starter project.
@@ -82,22 +83,37 @@ contract RiscZeroCFWalletDeploy is Script {
             console2.log("Using IRiscZeroVerifier contract deployed at", address(verifier));
         }
 
+        /*
+        // get ca_storage contract address (if exists)
+        // if not exists, read DEPLOY_STORAGE env var (contains deployer address)
+        address caStorageAddress = stdToml.readAddress(config, ".deployment.CA_Storage");
+        if (caStorageAddress == address(0)) {
+            // Controlla se DEPLOY_STORAGE è impostata, altrimenti vai in errore (non posso deployare a address == 0)
+            address storageDeployerAddr = uint256(vm.envOr("DEPLOY_STORAGE", address(0)));
+            if (storageDeployerAddr == address(0)) {
+            // ERROR!!! 
+            break; //TODO
+            }
+            // Deploy del contratto CA_Storage
+            CA_Storage caStorage = new CA_Storage(storageDeployerAddr);
+            console2.log("Deployed CA_Storage to", address(caStorage));
 
-        /*string memory cfPath = vm.envString("CF_FILE_PATH");
-        string memory saltPath = vm.envString("SALT_FILE_PATH");
-        bytes memory cfBytes = vm.readFileBinary(cfPath);
-        bytes memory saltBytes = vm.readFileBinary(saltPath);
-        require(saltBytes.length <= 16, "Salt must be less than 17 bytes");
-        bytes16 salt = bytes16(saltBytes);
-        console2.log("cfbytes ");
-        console2.logBytes(cfBytes);
-        console2.log("saltBytes ");
-        console2.logBytes(saltBytes);*/
-        // Deploy the application contract.
+            // Scrivi l'indirizzo di CA_Storage nel file di configurazione
+            stdToml.writeAddress(string.concat(vm.projectRoot(), "/", CONFIG_FILE), ".deployment.CA_Storage", address(caStorage));
+        } else {
+            console2.log("CA_Storage yet deployed at:", caStorageAddress);
+        }*/
+
+
         //bytes32 saltedCf = keccak256(abi.encodePacked(cf, salt)); //not working, or i missing something
-        bytes32 saltedCf = hex"f5b5525190513583b016d16a12c459b6efc94602cdf39c5b190f0368b7266e66";
 
-        CfWallet cfwallet = new CfWallet(verifier, saltedCf);
+
+
+
+        bytes32 saltedCf = hex"f5b5525190513583b016d16a12c459b6efc94602cdf39c5b190f0368b7266e66"; //value taken from guest code
+
+        address caStorageAddress = vm.envAddress("CA_STORAGE_ADDRESS");
+        CfWallet cfwallet = new CfWallet(verifier, caStorageAddress, saltedCf);
         console2.log("Deployed CfWallet to", address(cfwallet));
         console2.log("with saltedCf = ");
         console2.logBytes32(saltedCf);
