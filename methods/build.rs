@@ -3,7 +3,11 @@ use std::{collections::HashMap, env, fs::File, io::Write, path::Path};
 use risc0_build::{embed_methods_with_options, DockerOptions, GuestOptions};
 use risc0_build_ethereum::generate_solidity_files;
 
+const SOLIDITY_IMAGE_ID_PATH: &str = "../contracts/ImageID.sol";
+const SOLIDITY_ELF_PATH: &str = "../tests/Elf.sol";
+
 fn main() {
+    
     let current_dir = env::current_dir().unwrap();
     println!("cargo:warning=Current directory: {:?}", current_dir);
 
@@ -35,6 +39,8 @@ fn main() {
     )]));
 
     let solidity_opts = risc0_build_ethereum::Options::default()
+        //.with_image_id_sol_path(SOLIDITY_IMAGE_ID_PATH)
+        //.with_elf_sol_path(SOLIDITY_ELF_PATH);
         .with_image_id_sol_path(image_id_path.to_str().unwrap())
         .with_elf_sol_path(elf_path.to_str().unwrap());
 
