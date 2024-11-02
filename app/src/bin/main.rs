@@ -4,29 +4,24 @@ use alloy::{
     network::{EthereumWallet, TransactionBuilder},
     primitives::{Address, Bytes},
     providers::{Provider, ProviderBuilder},
-    rpc::types::TransactionRequest,
+    rpc::types::{TransactionRequest,Filter, Log},
     signers::local::PrivateKeySigner,
     sol,
 };
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use ethers::prelude::*;
+
 use methods::PKCS7_VERIFY_ELF;
 use risc0_ethereum_contracts::encode_seal;
-use risc0_ethereum_contracts::groth16;
 use risc0_zkvm::{
     compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt, VerifierContext,
 };
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
-use std::error::Error;
 use std::sync::Arc;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
-use tempfile::NamedTempFile;
 use tokio::task::spawn_blocking;
 
 // 3 bytes oid + 0x0c + len (quando estraggo cf len=0x10)
@@ -103,7 +98,7 @@ fn prove_pkcs7_verification(
         )
     };
 
-    println!("lengs: {:?}", lengths);
+    //println!("lengs: {:?}", lengths);
     let mut env_builder = ExecutorEnv::builder();
 
     env_builder.write(&chain_data).unwrap();
@@ -250,16 +245,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
 
-    // Create an alloy provider for that private key and URL.
-    let wallet = EthereumWallet::from(args.eth_wallet_private_key);
-    let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
-        .wallet(wallet)
-        .on_http(args.rpc_url);
-
-
-
-        
     //let salt: &[u8] = &[0x01,0x02,0x03,0x04];
 
     let pkcs7 = load_pkcs7(&args.p7_path)?;
@@ -372,21 +357,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         seal: seal.into(), 
     };
 
-    println!("\ncalldata[ \njournal: {:?}\nseal: {:?}\n]\n",calldata.journal,calldata.seal);
-
+    //println!("\ncalldata[ \njournal: {:?}\nseal: {:?}\n]\n",calldata.journal,calldata.seal);
+    let url = args.rpc_url.clone();
+    
+    // Create an alloy provider for that private key and URL.
+    let wallet = EthereumWallet::from(args.eth_wallet_private_key);
+    let provider = ProviderBuilder::new()
+        .with_recommended_fillers()
+        .wallet(wallet)
+        .on_http(args.rpc_url);
+    
     //send transaction
     let contract = args.contract;
     let tx = TransactionRequest::default()
         .with_to(contract)
         .with_call(&calldata);
     
-    println!("sending transaction {:?}\n",tx);
-    let tx_hash = provider
-        .send_transaction(tx)
+    //println!("sending transaction {:?}\n",tx);
+
+    let pending_tx = provider.send_transaction(tx)
         .await
         .context("Failed to send transaction")?;
 
-    println!("Transaction sent with hash: {:?}", tx_hash);
+    // Ottieni l'hash della transazione e monitora
+    /*let tx_hash = pending_tx_builder
+        .watch()
+        .await
+        .context("Failed while watching transaction")?;*/
+    
+    let tx_hash = *pending_tx.tx_hash();
+    println!("\nTransaction Hash: {:?}\n", tx_hash);
+
+    //let receipt = provider.get_transaction_receipt(tx_hash).await?;
+    let receipt = pending_tx.get_receipt().await.with_context(|| format!("transaction did not confirm: {}", tx_hash))?;
+    println!("receipt: {:?}\n",receipt);
+
+
+    if receipt.status() {
+        println!("Transaction succeeded!\nGas used: {:?}\neffective gas price: {:?}", receipt.gas_used, receipt.effective_gas_price);
+    }
+    else {
+        println!("Transaction failed\n")
+    }
+    //use reqwest::Client;
+    //use serde_json::Value;
+
+    //let client = provider.client();
+    //let params = vec![serde_json::json!(tx_hash)];
+
+    //let receipt = pending_tx_builder.get_receipt().await        .with_context(|| format!("transaction did not confirm: {}", tx_hash))?;
+    /*let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_getTransactionReceipt",
+        "params": params,
+        "id": 1,
+    });
+    let client = Client::new();
+
+    let response = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await?
+        .text()
+        .await?;*/
+    
+    //println!("Raw transaction receipt JSON:\n{}", response);
+    //let a = receipt.status();
+
+    //let logs = provider.get_logs()
+    //println!("\nstatus: {:?}",receipt);
 
 
     Ok(())

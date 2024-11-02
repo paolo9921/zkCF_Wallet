@@ -40,6 +40,6 @@ tiny-keccak = { version = "2.0", features = ["keccak"] }
 serde_json = "1.0"
 
 
-
+reqwest="0.12"
 
 
