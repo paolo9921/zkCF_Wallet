@@ -22,7 +22,7 @@ contract CA_Storage {
     * Add public Keys array to storage
     * param newPubKeys array of pub key to add (bytes)
      */
-    function addPublicKeys(bytes[] calldata newPubKeys) external {
+    function addPublicKeys(bytes[] calldata newPubKeys) external onlyOwner {
         for (uint256 i = 0; i < newPubKeys.length ; i++) {
             bytes32 keyHash = keccak256(newPubKeys[i]);
             emit LogPKBytes(newPubKeys[i]);
@@ -57,5 +57,5 @@ contract CA_Storage {
         return owner;   
     }
 
-
+    
 }   
