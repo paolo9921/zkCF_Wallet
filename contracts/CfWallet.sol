@@ -3,12 +3,13 @@ pragma solidity ^0.8.20;
 
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 import {ImageID} from "./ImageID.sol"; // auto-generated contract after running `cargo build`.
-
+import {CA_Storage} from "./CA_Storage.sol";
 
 contract CfWallet {
     
     bytes32 public constant imageId = ImageID.PKCS7_VERIFY_ID;
     IRiscZeroVerifier public immutable verifier;
+    CA_Storage public immutable ca_storage;
     bytes32 public saltedCf;
 
     address payable to;
@@ -16,10 +17,15 @@ contract CfWallet {
     bytes public lastSeal;
     bytes public lastJournal;
 
-    //event LogAddress(address extracted);
+    event Log(string message);
+    event LogTransfer(string message, address payable to);
+    event LogBytes32(bytes32 bytess);
+    event LogBytes(bytes rootPK);
 
-    constructor(IRiscZeroVerifier _verifier, bytes32 _cf) {
+ 
+    constructor(IRiscZeroVerifier _verifier, address _caStorage, bytes32 _cf) {
         verifier = _verifier;
+        ca_storage = CA_Storage(_caStorage);
         saltedCf = _cf; 
     }
 
@@ -28,7 +34,7 @@ contract CfWallet {
     //transfer the found to the address contained in the signed document
     function transfer(address payable _to) public {
         //require(verify_proof(proof, saltedCf, _to));
-        emit Log("transfer");
+        emit LogTransfer("transfer to ",_to);
 
         payable(_to).transfer(address(this).balance);
     }
@@ -38,9 +44,9 @@ contract CfWallet {
     // verify the salted_CF
     // verify if the root_public_key is valid
     function verifyAndTransfer(bytes calldata journal, bytes calldata seal) public {
-        //require(journal.length == 308, "Invalid journal length");
+        require(journal.length == 308, "Invalid journal length");
 
-        verifier.verify(seal, imageId, sha256(journal));
+        //verifier.verify(seal, imageId, sha256(journal));
         //emit Log("Verifier verification passed");
         
         to = bytesToAddress(journal[0:20]);
@@ -55,16 +61,26 @@ contract CfWallet {
         transfer(to);
     }
 
-    event Log(string message);
 
-    function verifyJournalData(bytes32 extractedCf, bytes calldata rootPubKey) private view returns (bool res){
+
+    function verifyJournalData(bytes32 extractedCf, bytes calldata rootPubKey) private returns (bool verified){
         
-        require(extractedCf == saltedCf, "different cf");
-        
-        //check the root key here
+        // Check that extracted CF matches the stored salted CF
+        if (extractedCf != saltedCf) {
+            emit LogBytes32(extractedCf);
+            revert InvalidCf(extractedCf);
+        }
+
+        // Verify the root public key through CA storage
+        if (!ca_storage.verifyPublicKey(rootPubKey)) {
+            revert InvalidRootPublicKey(rootPubKey);
+        }
 
         return true;
     }
+
+    error InvalidCf(bytes32 received);//, bytes32 expected);
+    error InvalidRootPublicKey(bytes invalidKey);
 
 
     function bytesToAddress(bytes calldata b) internal pure returns (address payable addr) {
@@ -74,7 +90,6 @@ contract CfWallet {
 
 
     //  TEST
-
     function get_owner() public view returns (bytes32) {
         return saltedCf;
     }
