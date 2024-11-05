@@ -8,4 +8,5 @@ sdoc.p7b
 /out/
 /broadcast/
 contracts/ImageID.sol
-
+deploy_sepolia
+risc0-foundry-template.png:Zone.Identifier
