@@ -61,3 +61,5 @@ When `cargo build` is runned, the `ImageID.sol` and `Elf.sol` contracts are gene
 [tests]: ./tests/
 [methods]: ../methods/README.md
 [guest code]: ../methods/guest
+[Image IDs]: https://dev.risczero.com/terminology#image-id
+[CA_Storage]: ./CA_Storage.sol

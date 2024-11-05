@@ -192,7 +192,7 @@ To deploy your contract to `Sepolia` testnet(or anyother network) you need to ex
         export BONSAI_API_URL="BONSAI_API_URL" 
     ```
 
-Now the only difference from the local deployment is the --rpc-url parameter, from http://localhost:8545 to https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY:?}
+Now the only difference from the local deployment is the --rpc-url parameter, from `http://localhost:8545` to `https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY:?}`
 
 So you can deploy CFWallet by running:
     ```bash
@@ -214,4 +214,4 @@ Do the same for all the other rpc call
 [RISC Zero Ethereum Deployment Guide]: ./deployment-guide.md
 [Application]: ./app/
 [zkVM Program]: ./methods/guest
-[Contract]: ./contracts/
+[Contracts]: ./contracts/
