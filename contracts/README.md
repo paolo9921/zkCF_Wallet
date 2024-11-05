@@ -1,26 +1,63 @@
 # Solidity Contracts
 
-This directory contains the Solidity contracts for an application with [RISC Zero] on Ethereum.
-The example contract included within the template is [`EvenNumber.sol`](./EvenNumber.sol).
-It holds a number, guaranteed to be even.
+This directory contains the Solidity contracts and the [tests].
 
-The Solidity libraries for RISC Zero can be found at [github.com/risc0/risc0-ethereum].
 
-Contracts are built and tested with [forge], which is part of the [Foundry] toolkit.
-Tests are defined in the `tests` directory in the root of this template.
+## CFWallet
+
+Contains the function that receive the proof of the pkcs7 file validation.
+```solidity
+    function verifyAndTransfer(bytes calldata journal, bytes calldata seal) public {
+        require(journal.length == 308, "Invalid journal length");
+
+        // verify the proof
+        verifier.verify(seal, imageId, sha256(journal));
+        
+        to = bytesToAddress(journal[0:20]);
+
+        bytes32 extractedCf = bytes32(journal[20:52]);
+        bytes calldata rootPubKey = journal[52:];
+
+        bool is_journal_valid = verifyJournalData(extractedCf, rootPubKey);
+        require(is_journal_valid, "Incorrect journal data");
+        emit Log("Journal data verified");
+
+        transfer(to);
+    }
+```
+
+If the proof verification succed, the journal is decoded, retreiving the following values:
+
+- `to`: ETH address. that the owner (Codice Fiscale owner) wants to send money.
+- `extractedCf`: Hash of the salted CF (`keccak256(CF + salt)` ). It must be the same as the contract deployer, revert otherwise.
+- `rootPubKey`: The public key of the Certification Authority that issues the user certificate. Check against the storage of [CA_Storage] contract.
+
+## CA_Storage
+Contract for the storage of the Certification Authority (CAs) public keys eIDAS compliant. 
+Save the (keccack256 hashed) pubkeys in a mapping that only the owner of the contract can update.
+```solidity
+    mapping(bytes32 => bool) public publicKeys;
+        
+    function verifyPublicKey(bytes memory pubKey) external view returns (bool exists){
+        bytes32 keyHash = keccak256(pubKey);
+        return publicKeys[keyHash];
+    }
+```
+
+`verifyPublicKey(bytes memory pubKey)` function used by CFWallet contract to verify the validity of the CA pubkey.
+
+!!! Only one istance of this contract must be deployed.
+
+!!! Currently only italian CA taked in consideration.
 
 ## Generated Contracts
 
-As part of the build process, this template generates the `ImageID.sol` and `Elf.sol` contracts.
-Running `cargo build` will generate these contracts with up to date references to your guest code.
+When `cargo build` is runned, the `ImageID.sol` and `Elf.sol` contracts are generated, with up to date references to the [guest code].
 
-- `ImageID.sol`: contains the [Image IDs][image-id] for the guests implemented in the [methods] directory.
+- `ImageID.sol`: contains the [Image IDs] for the guests implemented in the [methods] directory.
 - `Elf.sol`: contains the path of the guest binaries implemented in the [methods] directory.
   This contract is saved in the `tests` directory in the root of this template.
 
-[Foundry]: https://getfoundry.sh/
-[RISC Zero]: https://risczero.com
-[forge]: https://github.com/foundry-rs/foundry#forge
-[github.com/risc0/risc0-ethereum]: https://github.com/risc0/risc0-ethereum/tree/main/contracts
-[image-id]: https://dev.risczero.com/terminology#image-id
+[tests]: ./tests/
 [methods]: ../methods/README.md
+[guest code]: ../methods/guest
