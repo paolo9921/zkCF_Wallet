@@ -60,6 +60,24 @@ If one of the verification fails, the smart contract will revert the transaction
 ```
 
 ### Project flow
+- ONLY ADMIN: deploy CA_Storage contract and update it with CA's public keys.
+
+User usage guidelines:
+- Deploy its own CF_Wallet contract providing his salted CF
+- Sign a document including the content (-nodetached)
+    - The document content MUST be the ETH address of the wallet to send money 
+    - The subject field MUST be user Codice Fiscale
+- Incapsulate the signed document in a pkcs7 file
+- Run the program providing: 
+    - wallet private key
+    - node provider api_key
+    - CF_Wallet contract address
+    - path to pkcs7 file (`.p7m`,`.p7b`, or `p7s`)
+    - salt used in contract creation phase
+
+
+By doing this the user is able to send money in an authenticated way (thanks to eIDAS digital signature), without expose any of its data (thanks to zero knowledge proof) 
+
 ![Alt text](./risc0-foundry-template.png)
 
 
