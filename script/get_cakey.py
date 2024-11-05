@@ -5,13 +5,10 @@ from web3 import Web3
 import base64
 from cryptography.hazmat.primitives import serialization
 from typing import List, Dict, Optional
+import os
 
 # Constants
 LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml"
-WEB3_PROVIDER_URI = "http://localhost:8545"
-CONTRACT_ADDRESS = "0x8464135c8f25da09e49bc8782676a84730c318bc"
-PRIVATE_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" # must be the value of STORAGE_OWNER_KEY envvar
-
 MY_CA_PK_HEX = "b9baeb42d2bec05bacb61ac7eb7cd639f07a84b011fe3875091bbf0427514b8d93d09cf9819bd47b64046ae5993ac12309e78913b4622f8d56c63f80ca7e834c1ad4f82a6d6e9bd5cc19817efe2408ef347e4e844de7b4ef33ef48bca03ea2f36c4f134b66d56c58efea2eb8cba56278f1f963c3fed611ee6159470ba0e55e6a778d52f2cc030dd8439472bb1ecbc55b5d40ff8b1e99de19cbb4954382fcecca147a9d91de759afbe12705cb1c6f2a2af64f17bd60a3036de68afd90ee2af1ac742534f52ebb09ae166c956ecd81a8c00e4a366edf412f01986875e96c5169492691924052f1d06288f97fd6cf2639a151edf63952c9f45cb0b86084d960e9f9"
 MY_CA_PK = bytes.fromhex(MY_CA_PK_HEX)
 # Contract ABI
@@ -60,15 +57,30 @@ NAMESPACES = {
 
 class TrustedCAFetcher:
     def __init__(self):
+        alchemy_api_key = os.getenv("ALCHEMY_API_KEY")
+        if alchemy_api_key is None:
+            raise EnvironmentError("ALCHEMY_API_KEY not found.")
+
+        ca_storage_address = os.getenv("CA_STORAGE_ADDRESS")
+        if ca_storage_address is None:
+            raise EnvironmentError("CA_STORAGE_ADDRESS not found.")
+
+        self.storage_owner_key = os.getenv("STORAGE_OWNER_KEY")
+        if self.storage_owner_key is None:
+            raise EnvironmentError("STORAGE_OWNER_KEY not found")
+
+
+        WEB3_PROVIDER_URI = f"https://eth-sepolia.g.alchemy.com/v2/{alchemy_api_key}"
+        #WEB3_PROVIDER_URI = "http://localhost:8545"
         self.web3 = Web3(Web3.HTTPProvider(WEB3_PROVIDER_URI))
         self.public_keys: List[bytes] = []
         
         if not self.web3.is_connected():
             raise ConnectionError("Failed to connect to Ethereum network")
             
-        self.account = self.web3.eth.account.from_key(PRIVATE_KEY)
+        self.account = self.web3.eth.account.from_key(self.storage_owner_key)
         self.contract = self.web3.eth.contract(
-            address=self.web3.to_checksum_address(CONTRACT_ADDRESS),
+            address=self.web3.to_checksum_address(ca_storage_address),
             abi=CONTRACT_ABI
         )
 
@@ -147,7 +159,7 @@ class TrustedCAFetcher:
             print(f"Error checking key registration: {e}")
             return False
 
-    def send_to_contract(self, batch_size: int = 100) -> None:
+    def send_to_contract(self, batch_size: int = 160) -> None:
         if not self.public_keys:
             print("No new public keys to send")
             return
@@ -186,7 +198,7 @@ class TrustedCAFetcher:
                 })
                 
                 # Firma la transazione
-                signed = self.web3.eth.account.sign_transaction(transaction, private_key=PRIVATE_KEY)
+                signed = self.web3.eth.account.sign_transaction(transaction, private_key=self.storage_owner_key)
                 print("Transaction signed successfully")
 
                 # Invia la transazione
@@ -221,15 +233,14 @@ def main():
             print(f"Number of new public keys found: {len(fetcher.public_keys)}")
             if not fetcher.is_key_registered(MY_CA_PK):
                 fetcher.public_keys.append(MY_CA_PK)
-                print("\nMY CA KEY addedd. VALUE:")
-                print(MY_CA_PK)
+                print("\nMY CA KEY (fake) addedd")
             else:
                 print("My CA key already in contract.")     
 
             print(f"Number of new public keys found: {len(fetcher.public_keys)}")
 
             fetcher.send_to_contract()
-            print("\naaaaa:\n")
+            print("\last pk in list:")
             print(fetcher.public_keys[-1].hex())
         else:
             print("No trusted lists found or error occurred")
