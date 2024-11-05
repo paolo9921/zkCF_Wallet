@@ -46,7 +46,7 @@ contract CfWallet {
     function verifyAndTransfer(bytes calldata journal, bytes calldata seal) public {
         require(journal.length == 308, "Invalid journal length");
 
-        //verifier.verify(seal, imageId, sha256(journal));
+        verifier.verify(seal, imageId, sha256(journal));
         //emit Log("Verifier verification passed");
         
         to = bytesToAddress(journal[0:20]);

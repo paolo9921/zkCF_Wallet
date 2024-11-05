@@ -9,6 +9,7 @@ contract CA_Storage {
 
 
     event NewPublicKeysStored(bytes[] publicKey);
+    event NewPublicKeysStored(bool result);
     event LogPubkey(bytes32 public_Key);
     event LogPKBytes(bytes pk_bytes);
     event LogAdded(bool value);
@@ -25,23 +26,18 @@ contract CA_Storage {
     function addPublicKeys(bytes[] calldata newPubKeys) external onlyOwner {
         for (uint256 i = 0; i < newPubKeys.length ; i++) {
             bytes32 keyHash = keccak256(newPubKeys[i]);
-            emit LogPKBytes(newPubKeys[i]);
             // if hash of the pubkey doesn't exists in mapping, add
             if (!publicKeys[keyHash]) {
                 publicKeys[keyHash] = true;
-                emit LogAdded(publicKeys[keyHash]);
             }
 
         }
-        emit NewPublicKeysStored(newPubKeys);
+        emit NewPublicKeysStored(true);
     }
     
     
-    function verifyPublicKey(bytes memory pubKey) external returns (bool exists){
+    function verifyPublicKey(bytes memory pubKey) external view returns (bool exists){
         bytes32 keyHash = keccak256(pubKey);
-        emit LogPubkey(keyHash);
-        emit LogAdded(publicKeys[keyHash]);
-        //return true;
         return publicKeys[keyHash];
     }
 

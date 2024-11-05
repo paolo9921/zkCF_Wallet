@@ -18,7 +18,7 @@ use risc0_ethereum_contracts::encode_seal;
 use risc0_zkvm::{
     compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt, VerifierContext,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 use std::sync::Arc;
@@ -69,11 +69,10 @@ fn prove_pkcs7_verification(
     econtent: &Vec<u8>,
     salt: &Vec<u8>,
     msg: &Vec<u8>,
-    //algo_oid: &AlgorithmIdentifier, 
+    
     signature: &Vec<u8>,
     pub_key: &Vec<u8>,
-    exponent: Option<&Vec<u8>>, // only for RSA
-                                //prec_receipt: &Receipt,
+    exponent: Option<&Vec<u8>>, // only for RSA                           
 ) -> Receipt {
     // if RSA, send exp lenght, if ECDSA exp.len = 0
     let lengths = if let Some(exp) = exponent {
@@ -133,6 +132,7 @@ fn extract_certificate_data(
     certs: &[Certificate],
     subj_cert: &Certificate,
 ) -> Vec<CertificateData> {
+
     let mut certs_chain_data: Vec<CertificateData> = Vec::new();
 
     // hashmap for easily map a subject to his cert
@@ -141,10 +141,22 @@ fn extract_certificate_data(
         .map(|cert| (cert.tbs_certificate.subject.to_der(), cert))
         .collect();
 
+    // hashset to track visisted certs
+    let mut visited_certs = HashSet::new();
+    
     let mut current_cert = subj_cert;
 
     // WARNING: POSSIBLE LOOP, must handle this
     loop {
+
+        let cert_id = current_cert.tbs_certificate.subject.to_der();
+        if !visited_certs.insert(cert_id.clone()) {
+            // if already visited exit
+            panic!(
+                "Loop in certificate chain. Found 2 times certificate: {:?}",
+                current_cert.tbs_certificate.subject
+            );
+        }
         // find the issuer's certificate in the map
         let issuer_cert = cert_map
             .get(&current_cert.tbs_certificate.issuer.to_der())
@@ -367,12 +379,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .wallet(wallet)
         .on_http(args.rpc_url);
     
+
+
     //send transaction
     let contract = args.contract;
     let tx = TransactionRequest::default()
         .with_to(contract)
         .with_call(&calldata);
     
+    // test balance before sending transaction
+    let balance_before = provider.get_balance(contract).await.with_context(|| format!("Failed to get balance for contract: {}", contract))?;
+    println!("balance: {:?}",balance_before);
+
     //println!("sending transaction {:?}\n",tx);
 
     let pending_tx = provider.send_transaction(tx)
@@ -399,6 +417,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     else {
         println!("Transaction failed\n")
     }
+
+    let balance = provider.get_balance(contract).await.with_context(|| format!("Failed to get balance for contract: {}", contract))?;
+    println!("balance: {:?}",balance);
     //use reqwest::Client;
     //use serde_json::Value;
 
@@ -412,8 +433,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "params": params,
         "id": 1,
     });
-    let client = Client::new();
-
+    let client = Client::n
     let response = client
         .post(url)
         .json(&request)

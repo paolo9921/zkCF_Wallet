@@ -4,9 +4,20 @@ use hex;
 use k256::ecdsa::{
     signature::Verifier, Signature as EcdsaSignature, VerifyingKey as EcdsaVerifyingKey,
 };
-use k256::sha2::{Sha256 as ksha256};
+
+use crypto_bigint::U2048;
+use crypto_bigint::Encoding;
+/*use crypto_bigint::U64;
+use crypto_bigint::NonZero;
+use crypto_bigint::modular::runtime_mod::DynResidue;
+use crypto_bigint::modular::runtime_mod::DynResidueParams;
+use crypto_bigint::Encoding;*/
+use k256::sha2::{Sha256};
+use k256::sha2::Digest;
 use risc0_zkvm::guest::env;
 use rsa::{pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey}, RsaPublicKey,};
+use rsa::signature::DigestVerifier;
+
 use tiny_keccak::{Hasher, Keccak};
 
 use pkcs7_core::{CertificateData, PublicKey};
@@ -32,6 +43,7 @@ fn keccak256(bytes: &[u8], salt: &[u8]) -> [u8; 32] {
 }
 
 fn verify_rsa(modulus_bytes: &[u8], exp_bytes: &[u8], signature_bytes: &[u8], msg: &[u8]) -> bool {
+    
     let modulus = rsa::BigUint::from_bytes_be(modulus_bytes);
     let exponent = rsa::BigUint::from_bytes_be(exp_bytes);
 
@@ -40,14 +52,17 @@ fn verify_rsa(modulus_bytes: &[u8], exp_bytes: &[u8], signature_bytes: &[u8], ms
         Err(_) => return false,
     };
 
-    let verifying_key = RsaVerifyingKey::<ksha256>::new(pub_key);
+    let verifying_key = RsaVerifyingKey::<Sha256>::new(pub_key);
 
     let signature = match RsaSignature::try_from(signature_bytes) {
         Ok(sig) => sig,
         Err(_) => return false,
     };
 
-    verifying_key.verify(msg, &signature).is_ok()
+    let mut hasher = Sha256::new();
+    hasher.update(&msg);
+    //verifying_key.verify(msg, &signature).is_ok()
+    verifying_key.verify_digest(hasher,&signature).is_ok()
 }
 
 /* MANUALLY VERIFY */
@@ -131,7 +146,7 @@ fn verify_rsa(
 
     let hash_from_signature = &digest_info[expected_digest_info_prefix.len()..expected_digest_info_prefix.len() + 32];
 
-    let mut hasher = ksha256::new();
+    let mut hasher = Digest::new();
     hasher.update(&msg);
     let digest = hasher.finalize();
 
@@ -169,6 +184,7 @@ fn verify_chain(chain: &[CertificateData]) -> &[u8] {
             if let Some(first_byte) = mod_sign.get_mut(0) {
                 *first_byte = first_byte.wrapping_add(1);
             }*/
+            
             verify_rsa(modulus, exponent, &cert.signature, &cert.tbs_bytes)
         }
         PublicKey::Ecdsa { point: _ } => true,
@@ -196,6 +212,14 @@ fn extract_cf_field(subject: &[u8]) -> Result<&[u8], &'static str> {
     }
     Err("OID sequence not found in subject")
 }
+
+
+fn read_effective_slice(buf: &mut [u8], len: usize) -> &[u8] {
+    env::read_slice(&mut buf[..len]);
+    &buf[..len]
+}
+
+
 
 fn main() {
     let start = env::cycle_count();
@@ -228,23 +252,14 @@ fn main() {
     let mut pubkey_mod = [0u8; PUBKEY_MOD_MAX_LEN];
     let mut pubkey_exp = [0u8; PUBKEY_EXP_MAX_LEN];
 
-    // read effective bytes of each array
-    env::read_slice(&mut econtent[..econtent_len]);
-    env::read_slice(&mut salt[..salt_len]);
-    env::read_slice(&mut msg[..msg_len]);
-    //env::read_slice(&mut algo_oid[..algoid_len]);
-    env::read_slice(&mut signature[..signature_len]);
-    env::read_slice(&mut pubkey_mod[..pubkey_mod_len]);
-    env::read_slice(&mut pubkey_exp[..pubkey_exp_len]);
+    // helper function to read and slice data
+    let econtent = read_effective_slice(&mut econtent, econtent_len);
+    let salt = read_effective_slice(&mut salt, salt_len);
+    let msg = read_effective_slice(&mut msg, msg_len);
+    let signature = read_effective_slice(&mut signature, signature_len);
+    let pubkey_mod = read_effective_slice(&mut pubkey_mod, pubkey_mod_len);
+    let pubkey_exp = read_effective_slice(&mut pubkey_exp, pubkey_exp_len);
 
-    // slice the array at the effective size
-    let econtent = &econtent[..econtent_len];
-    let salt = &salt[..salt_len];
-    let msg = &msg[..msg_len];
-    //let algo_oid = &algo_oid[..algoid_len];
-    let signature = &signature[..signature_len];
-    let pubkey_mod = &pubkey_mod[..pubkey_mod_len];
-    let pubkey_exp = &pubkey_exp[..pubkey_exp_len];
 
     //let mut pubkey_exp: Vec<u8> = vec![0; pubkey_exp_len];
     //env::read_slice(&mut pubkey_exp);
@@ -275,6 +290,7 @@ fn main() {
         &pubkey_exp,
         &signature,
         &digest );*/
+
 
     assert!(
         verify_rsa(&pubkey_mod, &pubkey_exp, &signature, &msg),
@@ -315,5 +331,5 @@ fn main() {
     env::commit_slice(trusted_pk);
     //env::commit_slice(fake_journal);
     let end = env::cycle_count();
-    //println!("my_operation_to_measure: {}", end - start);
+    println!("my_operation_to_measure: {}", end - start);
 }
