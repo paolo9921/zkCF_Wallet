@@ -13,7 +13,6 @@ risc0-build-ethereum = { git = "https://github.com/risc0/risc0-ethereum", tag = 
 risc0-ethereum-contracts = { git = "https://github.com/risc0/risc0-ethereum", tag = "v1.1.4" }
 
 methods = { path = "../methods" }
-#pkcs7-core = { path = "core" }
 
 pkcs7-core = { path = "../core" }
 
@@ -30,16 +29,37 @@ ethers = { version = "2.0", features = ["abigen"] }
 hex = { version = "0.4" }
 log = { version = "0.4" }
 serde = { version = "1.0", features = ["derive", "std"] }
-tempfile = { version = "3.13" }
+tempfile = { version = "3.13", optional = true }
 tokio = { version = "1.35", features = ["full"] }
 tracing-subscriber = { version = "0.3" }
 url = { version = "2.5" }
-
+base64 = "0.22"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
-
 serde_json = "1.0"
-
-
 reqwest="0.12"
+criterion = "0.5"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+temp-dir = "0.1"   # For handling test files
+anyhow = "1.0"     # Error handling
+colored = "2.0" 
+memory-stats = "1.0"
+tempfile = "3.5"
+base64 = "0.22"
+
+[[bench]]
+#name = "pkcs7_parsing"
+harness = false
+#path = "benches/pkcs7_parsing.rs"
+name = "zkp_generation"
+path = "benches/zkp_generation.rs"
 
 
+[lib]
+name ="app"
+path ="src/lib.rs"
+
+[profile.bench]
+opt-level = 1
+lto = "thin"

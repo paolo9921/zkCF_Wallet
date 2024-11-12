@@ -1,4 +1,4 @@
-use pkcs7_core::{load_pkcs7, Certificate, CertificateData, PublicKey};
+use pkcs7_core::pkcs7::{load_pkcs7, Certificate, CertificateData, PublicKey};
 
 use alloy::{
     network::{EthereumWallet, TransactionBuilder},
@@ -64,15 +64,15 @@ struct Args {
 
 
 
-fn prove_pkcs7_verification(
+pub fn prove_pkcs7_verification(
     chain_data: &Vec<CertificateData>, //Vec<CertificateData>,
     econtent: &Vec<u8>,
     salt: &Vec<u8>,
     msg: &Vec<u8>,
-    
     signature: &Vec<u8>,
     pub_key: &Vec<u8>,
-    exponent: Option<&Vec<u8>>, // only for RSA                           
+    exponent: Option<&Vec<u8>>, // only for RSA   
+    now: u64,                        
 ) -> Receipt {
     // if RSA, send exp lenght, if ECDSA exp.len = 0
     let lengths = if let Some(exp) = exponent {
@@ -101,6 +101,7 @@ fn prove_pkcs7_verification(
     let mut env_builder = ExecutorEnv::builder();
 
     env_builder.write(&chain_data).unwrap();
+    env_builder.write(&now).unwrap();
     env_builder.write(&lengths).unwrap();
     env_builder.write_slice(&econtent);
     env_builder.write_slice(&salt);
@@ -128,7 +129,7 @@ fn prove_pkcs7_verification(
     receipt
 }
 
-fn extract_certificate_data(
+pub fn extract_certificate_data(
     certs: &[Certificate],
     subj_cert: &Certificate,
 ) -> Vec<CertificateData> {
@@ -180,10 +181,11 @@ fn extract_certificate_data(
 
         current_cert = issuer_cert;
     }
+    //println!("certs chain_data: {:?}\n",certs_chain_data);
     certs_chain_data
 }
 
-fn convert_to_bytes(str_bytes: Vec<u8>) -> Vec<u8> {
+pub fn convert_to_bytes(str_bytes: Vec<u8>) -> Vec<u8> {
     let mut econtent_str =
         String::from_utf8(str_bytes).expect("Failed to convert from bytes to string");
     econtent_str = econtent_str.trim().to_string();
@@ -254,8 +256,8 @@ fn deploy_contract(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI Arguments: The application starts by parsing command-line arguments provided by the user.
+    //let args = parse_arguments();
     let args = Args::parse();
-
 
     //let salt: &[u8] = &[0x01,0x02,0x03,0x04];
 
@@ -325,9 +327,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let signature_cloned = Arc::clone(&signature);
     let public_key_cloned = Arc::clone(&public_key);
 
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     // tokio::task::spawn_blocking
     let receipt = spawn_blocking(move || {
         match &*public_key_cloned {
+            
             PublicKey::Rsa { modulus, exponent } => {
                 prove_pkcs7_verification(
                     &*chain_data_cloned,              
@@ -338,6 +342,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &*signature_cloned,               
                     modulus,  
                     Some(exponent),
+                    now,
                 )
             }
             PublicKey::Ecdsa { point } => {
@@ -350,6 +355,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &*signature_cloned,               // &Vec<u8>
                     point,                             // &Vec<u8>
                     None, 
+                    now,
                 )
             }
         }
@@ -357,6 +363,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await
     .context("Blocking task panicked (receipt)")?;
 
+    println!("Received Receipt from Bonsai!");
     /*let imgid = compute_image_id(PKCS7_VERIFY_ELF);
     println!("imagID {:?}\n",imgid);*/
 
@@ -369,8 +376,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         seal: seal.into(), 
     };
 
-    //println!("\ncalldata[ \njournal: {:?}\nseal: {:?}\n]\n",calldata.journal,calldata.seal);
-    let url = args.rpc_url.clone();
+    println!("\ncalldata[ \njournal: {:?}\nseal: {:?}\n]\n",calldata.journal,calldata.seal);
+
     
     // Create an alloy provider for that private key and URL.
     let wallet = EthereumWallet::from(args.eth_wallet_private_key);
@@ -412,7 +419,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     if receipt.status() {
-        println!("Transaction succeeded!\nGas used: {:?}\neffective gas price: {:?}", receipt.gas_used, receipt.effective_gas_price);
+        println!("Transaction confirmed in block: {:?} \nGas used: {:?}\neffective gas price: {:?}", receipt.block_number.unwrap(), receipt.gas_used, receipt.effective_gas_price);
     }
     else {
         println!("Transaction failed\n")
