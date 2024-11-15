@@ -15,7 +15,7 @@ pub struct SignedData {
     pub digest_algorithms: Vec<AlgorithmIdentifier>,
     pub content_info: ContentInfo,
     pub certs: Vec<Certificate>,
-    pub crls: Vec<u8>,
+    pub crls: Vec<CertificateList>,
     pub signer_infos: Vec<SignerInfo>, // Multiple SignerInfo structures
 }
 #[derive(Debug)]
@@ -23,6 +23,54 @@ pub struct ContentInfo {
     pub content_type: Oid,
     pub e_content: Vec<u8>, // Encapsulated content, present if doc sigend with -nodetach option
 }
+
+
+#[derive(Debug)]
+pub struct CertificateList {
+    pub tbs_cert_list: TbsCertList,
+    pub signature_algorithm: AlgorithmIdentifier,
+    pub signature: Vec<u8>,
+}
+
+//Optimized struct to send to guest code for verification
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CrlData {
+    pub issuer: Vec<u8>,              // Issuer name in DER format
+    pub this_update: u64,
+    pub next_update: Option<u64>,
+    pub revoked_serials: Vec<String>, // List of revoked certificate serial numbers
+    pub signature: Vec<u8>,           // CRL signature
+    pub tbs_bytes: Vec<u8>,           // To-be-signed CRL bytes for signature verification
+    pub issuer_pk: PublicKey,         // Public key of the CRL issuer
+}
+
+
+#[derive(Debug)]
+pub struct TbsCertList {
+    pub tbs_bytes: Vec<u8>,
+    pub version: Option<u8>,
+    pub signature: AlgorithmIdentifier,
+    pub issuer: Name,
+    pub this_update: u64,
+    pub next_update: Option<u64>,
+    pub revoked_certificates: Vec<RevokedCertificate>,
+}
+
+#[derive(Debug)]
+pub struct RevokedCertificate {
+    pub serial_number: String,
+    pub revocation_date: u64,
+    pub crl_entry_extensions: Option<Vec<Extension>>,
+}
+
+#[derive(Debug)]
+pub struct Extension {
+    pub extn_id: Oid,
+    pub critical: bool,
+    pub extn_value: Vec<u8>,
+}
+
+
 #[derive(Debug, Clone)]
 pub struct SignerInfo {
     pub version: u8,
@@ -85,6 +133,7 @@ pub struct CertificateData {
     pub issuer_pk: PublicKey,
     pub signature: Vec<u8>,
     pub tbs_bytes: Vec<u8>,
+    pub serial_number: String,
     pub not_before: u64,
     pub not_after: u64,
 }

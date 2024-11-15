@@ -74,6 +74,18 @@ impl SignedData {
                 }
                 Ok(certificates)
             })?;
+            
+            let crls = if let Ok(crl_list) = cons.take_constructed_if(Tag::CTX_1, |cons| {
+                let mut crl_list = Vec::new();
+                while let Ok(crl) = CertificateList::take_from(cons) {
+                    crl_list.push(crl);
+                }
+                Ok(crl_list)
+            }) {
+                crl_list
+            } else {
+                Vec::new()
+            };
 
             let signer_infos = cons.take_set(|cons| {
                 let mut signers = Vec::new();
@@ -88,7 +100,7 @@ impl SignedData {
                 digest_algorithms,
                 content_info,
                 certs,
-                crls: Vec::new(), // Optional, can be parsed later
+                crls, 
                 signer_infos,
             })
         })
@@ -96,14 +108,187 @@ impl SignedData {
 
     pub fn to_string(&self) -> String {
         format!(
-            "SignedData {{\n  version: {},\n  content_info: {},\n  signer_infos: {}\n}}",
+            "SignedData {{\n  version: {},\n  content_info: {},\n  number of certs: {},\n  number of CRLs: {},\n  signer_infos: {}\n}}",
             self.version,
             self.content_info.to_string(),
+            self.certs.len(),
+            self.crls.len(),
             self.signer_infos
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<String>(),
         )
+    }
+}
+
+
+
+impl CertificateList {
+    pub fn take_from<S: decode::Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
+        cons.take_sequence(|cons| {
+
+
+            let tbs_cert_list = TbsCertList::take_from(cons)?;
+            let signature_algorithm = AlgorithmIdentifier::take_from(cons)?;
+            let signature = cons.take_value(|_, content| {
+                let sign = content.as_primitive()?.slice_all()?.to_vec();
+                _ = content.as_primitive()?.skip_all();
+                Ok(sign)
+            })?;
+
+            Ok(CertificateList {
+                tbs_cert_list,
+                signature_algorithm,
+                signature,
+            })
+        })
+    }
+
+    pub fn extract_data(&self, issuer_cert: &Certificate) -> CrlData {
+        let revoked_serials: Vec<String> = self.tbs_cert_list.revoked_certificates
+            .iter()
+            .map(|cert| cert.serial_number.clone())
+            .collect();
+
+        CrlData {
+            issuer: self.tbs_cert_list.issuer.to_der(),
+            this_update: self.tbs_cert_list.this_update,
+            next_update: self.tbs_cert_list.next_update,
+            revoked_serials,
+            signature: self.signature.clone(),
+            tbs_bytes: self.tbs_cert_list.tbs_bytes.clone(),
+            issuer_pk: issuer_cert.tbs_certificate.subject_public_key_info.subject_public_key.clone(),
+        }
+    }
+}
+
+impl TbsCertList {
+    pub fn take_from<S: decode::Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
+        let tbs_captured = cons.capture_one()?;
+        let tbs_bytes = tbs_captured.as_slice().to_vec();
+        let tbs_source = tbs_captured.into_source();
+
+        //let mut tbs_bytes: Vec<u8> = Vec::new();
+        //let tbs_certificate = cons.take_sequence(|cons| {
+        let tbs_certificate = Constructed::decode(tbs_source, Mode::Der, |cons| {
+            cons.take_sequence(|cons| {
+
+                // Version is optional, default is v1(0)
+                let version = cons.take_opt_primitive_if(Tag::INTEGER, |content| content.to_u8())?;
+
+                let signature = AlgorithmIdentifier::take_from(cons)?;
+                let issuer = Name::take_from(cons)?;
+                
+                // Parse thisUpdate time
+                let this_update = cons.take_primitive(|_, content| {
+                    let time_str = String::from_utf8(content.slice_all()?.to_vec())
+                        .map_err(|_| DecodeError::content("Invalid UTF-8 in thisUpdate", decode::Pos::default()))?;
+                    Ok(Validity::parse_asn1_to_timestamp(&time_str).expect("failed to parse this_update date"))
+                })?;
+
+                // Parse optional nextUpdate time
+                let next_update = if let Ok(time) = cons.take_primitive(|_, content| {
+                    let time_str = String::from_utf8(content.slice_all()?.to_vec())
+                        .map_err(|_| DecodeError::content("Invalid UTF-8 in nextUpdate", decode::Pos::default()))?;
+                    Ok(Validity::parse_asn1_to_timestamp(&time_str).expect("failed to parse next_update date"))
+                }) {
+                    Some(time)
+                } else {
+                    None
+                };
+
+                // Parse sequence of revoked certificates (optional)
+                let revoked_certificates = cons.take_opt_sequence(|cons| {
+                    let mut certificates = Vec::new();
+                    while let Ok(cert) = RevokedCertificate::take_from(cons) {
+                        certificates.push(cert);
+                    }
+                    Ok(certificates)
+                })?.unwrap_or_default();
+
+                Ok(TbsCertList {
+                    tbs_bytes,
+                    version,
+                    signature,
+                    issuer,
+                    this_update,
+                    next_update,
+                    revoked_certificates,
+                })
+            }) 
+        })
+        .expect("failed to parse tbs certificate");
+        Ok(tbs_certificate) 
+    }
+}
+
+impl RevokedCertificate {
+    pub fn take_from<S: decode::Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
+        cons.take_sequence(|cons| {
+            // Parse serial number
+            let serial_number = cons.take_primitive(|_, content| {
+                let bytes = content.slice_all()?.to_vec();
+                let hex_bytes = hex::encode(&bytes);
+                _ = content.skip_all();
+                Ok(hex_bytes)
+            })?;
+
+            // Parse revocation date
+            let revocation_date = cons.take_primitive(|_, content| {
+                let time_str = String::from_utf8(content.slice_all()?.to_vec())
+                    .map_err(|_| DecodeError::content("Invalid UTF-8 in revocationDate", decode::Pos::default()))?;
+                Ok(Validity::parse_asn1_to_timestamp(&time_str).expect("failed to parse revocation_date"))
+            })?;
+
+            // Parse optional CRL entry extensions
+            let crl_entry_extensions = cons.take_opt_sequence(|cons| {
+                let mut extensions = Vec::new();
+                while let Ok(ext) = Extension::take_from(cons) {
+                    extensions.push(ext);
+                }
+                Ok(extensions)
+            })?;
+
+            Ok(RevokedCertificate {
+                serial_number,
+                revocation_date,
+                crl_entry_extensions,
+            })
+        })
+    }
+}
+
+impl Extension {
+    pub fn take_from<S: decode::Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
+        cons.take_sequence(|cons| {
+            let extn_id = Oid::take_from(cons)?;
+            
+            // Parse optional critical flag, defaults to false
+            let critical = cons.take_opt_primitive_if(Tag::BOOLEAN, |content| {
+                content.to_bool()
+            })?.unwrap_or(false);
+
+            // Parse extension value as octet string
+            let extn_value = cons.take_primitive(|_, content| {
+                let value = content.slice_all()?.to_vec();
+                _ = content.skip_all();
+                Ok(value)
+            })?;
+
+            Ok(Extension {
+                extn_id,
+                critical,
+                extn_value,
+            })
+        })
     }
 }
 
@@ -384,51 +569,6 @@ impl PartialEq for RelativeDistinguishedName {
     }
 }
 
-/* AUTH ATTR BONO
-impl AuthenticatedAttributes {
-    pub fn take_from<S: decode::Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
-
-        println!("PARSING auth attr");
-
-        let auth_bytes = cons.capture_all()?.into_bytes();
-        let auth_attr_bytes = auth_bytes.clone().to_vec();
-        //println!("signed_attributes bytes: {:?}",auth_attr_bytes);
-
-        let auth_source = auth_attr_bytes.into_source();
-
-        //println!("auth source {:?}",auth_source.slice());
-       /* let attributes = Constructed::decode(auth_source, Mode::Der, |cons|{
-
-            println!("cons prima {:?}",cons);
-
-            let auth_attributes_vec = cons.take_constructed(|_,cons|{
-
-                let mut auth_attrs = Vec::new();
-                println!("cons passato a Attribute {:?}",cons);
-
-                while let Ok(attr) = Attribute::take_from(cons){
-                    auth_attrs.push(attr);
-                }
-                Ok(auth_attrs)
-            })?;
-
-            Ok(auth_attributes_vec)
-        }).expect("failed to parse auth attr values"); */
-
-
-        Ok(AuthenticatedAttributes {
-            auth_attr_bytes,
-            attributes
-         })
-    }
-
-    pub fn to_string(&self) -> String {
-        format!(
-            "AuthenticatedAttributes {{\n  authenticated attributes: {:?}\n}}",
-            self.auth_attr_bytes
-        )
-    }
-}*/
 
 impl Attribute {
     pub fn take_from<S: decode::Source>(
@@ -548,8 +688,37 @@ impl Certificate {
                 .clone(),
             signature: self.signature_value.clone(),
             tbs_bytes: self.tbs_certificate.tbs_bytes.clone(),
+            serial_number: self.tbs_certificate.serial_number.clone(),
             not_before: self.tbs_certificate.validity.not_before,
             not_after: self.tbs_certificate.validity.not_after,
+        }
+    }
+
+
+    pub fn is_revoked(&self, crls: &[CertificateList]) -> bool {
+        // Find the CRL issued by this certificate's issuer
+        if let Some(crl) = crls.iter().find(|crl| crl.tbs_cert_list.issuer == self.tbs_certificate.issuer) {
+            // Check if the certificate's serial number is in the revoked certificates list
+            let cert_serial = &self.tbs_certificate.serial_number;
+            
+            let is_revoked = crl.tbs_cert_list.revoked_certificates.iter()
+                .any(|rev_cert| &rev_cert.serial_number == cert_serial);
+
+            // Check if CRL is still valid
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let crl_valid = current_time >= crl.tbs_cert_list.this_update && 
+                           crl.tbs_cert_list.next_update
+                               .map(|next| current_time <= next)
+                               .unwrap_or(true);
+
+            is_revoked && crl_valid
+        } else {
+            // No CRL found for this issuer
+            false
         }
     }
 
