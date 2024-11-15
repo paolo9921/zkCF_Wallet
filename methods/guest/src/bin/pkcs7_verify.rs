@@ -20,7 +20,7 @@ use rsa::signature::DigestVerifier;
 
 use tiny_keccak::{Hasher, Keccak};
 
-use pkcs7_core::{CertificateData, PublicKey};
+use pkcs7_core::pkcs7::{CertificateData, CrlData, PublicKey};
 
 const ECONTENT_MAX_LEN: usize = 128;
 const SALT_MAX_LEN: usize = 16;
@@ -65,129 +65,94 @@ fn verify_rsa(modulus_bytes: &[u8], exp_bytes: &[u8], signature_bytes: &[u8], ms
     verifying_key.verify_digest(hasher,&signature).is_ok()
 }
 
-/* MANUALLY VERIFY */
-/*
-fn verify_rsa(
-    modulus_bytes: &[u8],
-    exp_bytes: &[u8],
+
+fn verify_ecdsa(
+    key_bytes: &[u8],
     signature_bytes: &[u8],
     msg: &[u8],
 ) -> bool {
-
-    let modulus = U2048::from_be_slice(modulus_bytes);
-    let signature = U2048::from_be_slice(signature_bytes);
-
-    let exponent = {
-        // Pad l'esponente a 8 byte (64 bit)
-        let mut exp_padded = [0u8; 8];
-        exp_padded[8 - exp_bytes.len()..].copy_from_slice(exp_bytes);
-        U64::from_be_bytes(exp_padded)
-    };
-
-    //println!("mod: {:?}\nsig: {:?}\nexp: {:?}",modulus,signature,exponent);
-
-    let modul = NonZero::new(modulus).unwrap();
-    let params = DynResidueParams::new(&modul);
-    let signature_residue = DynResidue::new(&signature, params);
-
-    //  m = s^e mod n
-    let decrypted_residue = signature_residue.pow(&exponent);
-    let decrypted_signature = decrypted_residue.retrieve();
-
-    let decrypted_bytes = decrypted_signature.to_be_bytes();
-
-    //println!("\ndecrypted bytes: {:?}",decrypted_bytes);
-
-    // Verifica il padding PKCS#1 v1.5
-    // il formato dovrebbe essere: 0x00 0x01 PS 0x00 T
-    // dove PS è il padding 0xFF e T è l'ASN.1 DER encoding di DigestInfo
-
-    // primo byte 00, secondo 01
-    if decrypted_bytes[0] != 0x00 || decrypted_bytes[1] != 0x01 {
-        println!("1");
-        return false;
-    }
-
-    // indice di 0x00 dopo il padding
-    let mut index = 2;
-    while index < decrypted_bytes.len() && decrypted_bytes[index] == 0xFF {
-        index += 1;
-    }
-
-    if index >= decrypted_bytes.len() || decrypted_bytes[index] != 0x00 {
-        println!("2");
-        return false;
-    }
-    index += 1;
-
-    //  ASN.1 DER di DigestInfo
-    let digest_info = &decrypted_bytes[index..];
-
-    // ASN.1 DER encoding per DigestInfo con SHA-256
-    let expected_digest_info_prefix: [u8; 19] = [
-        0x30, 0x31,       // SEQUENCE, lunghezza 49
-        0x30, 0x0d,       // SEQUENCE, lunghezza 13
-        0x06, 0x09,       // OID, lunghezza 9
-        0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, // OID per SHA-256
-        0x05, 0x00,       // NULL
-        0x04, 0x20        // OCTET STRING, lunghezza 32
-    ];
-
-    // Verifica che il digest_info inizi con il prefisso atteso
-    if digest_info.len() < expected_digest_info_prefix.len() + 32 {
-        println!("3");
-        return false;
-    }
-
-    if &digest_info[0..expected_digest_info_prefix.len()] != expected_digest_info_prefix {
-        println!("4");
-        return false;
-    }
-
-    let hash_from_signature = &digest_info[expected_digest_info_prefix.len()..expected_digest_info_prefix.len() + 32];
-
-    let mut hasher = Digest::new();
-    hasher.update(&msg);
-    let digest = hasher.finalize();
-
-    println!("\n\n---\nhash_from sig: {:?}\n\ndigest: {:?}",hex::encode(&hash_from_signature), hex::encode(&digest));
-
-    *hash_from_signature == *digest
-}*/
-/*
-fn verify_ecdsa(key_bytes: &[u8], signature_bytes: &[u8], msg: &[u8]) -> bool {
     if key_bytes.len() != 33 && key_bytes.len() != 65 {
         println!("error");
     }
 
-    let verifying_key =
-        EcdsaVerifyingKey::from_sec1_bytes(key_bytes).expect("failed to create verifying_key");
+    let verifying_key = EcdsaVerifyingKey::from_sec1_bytes(key_bytes).expect("failed to create verifying_key");
     let signature = EcdsaSignature::from_slice(&signature_bytes).unwrap();
-    println!(
-        "-------------\nverkey {:?}\nsignature {:?}",
-        verifying_key, signature
-    );
+    println!("-------------\nverkey {:?}\nsignature {:?}",verifying_key,signature);
 
     let res = verifying_key.verify(&msg, &signature).is_ok();
-    println!("\nres: {:?}", res);
+    println!("\nres: {:?}",res);
     res
-}*/
+}
 
-fn verify_chain(chain: &[CertificateData]) -> &[u8] {
+fn verify_period(nbefore: u64, nafter: u64, now: u64) -> bool {
+    nbefore <= now && nafter >= now
+    
+}
+
+
+
+fn is_cert_revoked(cert: &CertificateData, crls: &[CrlData], now: u64) -> bool {
+    for crl in crls {
+        // check if CRL matches the certificate's issuer
+        if crl.issuer == cert.issuer {
+            // check if CRL is valid
+            if !verify_period(crl.this_update, crl.next_update.unwrap_or(u64::MAX), now) {
+                continue; // skip expired/invalid CRL
+            }
+
+            // verify CRL signature
+            let is_valid = match &crl.issuer_pk {
+                PublicKey::Rsa { modulus, exponent } => {
+                    verify_rsa(modulus, exponent, &crl.signature, &crl.tbs_bytes)
+                }
+                PublicKey::Ecdsa { point } => {
+                    verify_ecdsa(point, &crl.signature, &crl.tbs_bytes)
+                }
+            };
+            if !is_valid {
+                continue; //skip invalid signature
+            }
+            // check if certificate is revoked
+            if crl.revoked_serials.contains(&cert.serial_number) {
+                return true; 
+            }
+        }
+    }
+    false
+}
+
+
+
+fn verify_chain<'a>(chain: &'a [CertificateData], crls: &'a [CrlData], now: u64) -> &'a [u8] {
     let mut root_pk: &[u8] = &[];
     chain.iter().all(|cert| match &cert.issuer_pk {
+
+
+        
         PublicKey::Rsa { modulus, exponent } => {
+            let mut period_valid: bool = false;
             if cert.subject == cert.issuer {
                 root_pk = modulus.as_ref();
             }
-            /*let mut mod_sign = cert.signature.to_vec();
-            if let Some(first_byte) = mod_sign.get_mut(0) {
-                *first_byte = first_byte.wrapping_add(1);
-            }*/
-            
+            // verify certificate revocation status
+            if is_cert_revoked(cert, crls, now){
+                return false;
+            }
+            assert!(verify_period(cert.not_before, cert.not_after, now));           
             verify_rsa(modulus, exponent, &cert.signature, &cert.tbs_bytes)
         }
-        PublicKey::Ecdsa { point: _ } => true,
+        PublicKey::Ecdsa { point } => {
+            let mut period_valid: bool = false;
+            if cert.subject == cert.issuer {
+                root_pk = point.as_ref();
+            }
+            if is_cert_revoked(cert, crls, now){
+                return false;
+            }
+            assert!(verify_period(cert.not_before, cert.not_after, now));
+            verify_ecdsa(point, &cert.signature, &cert.tbs_bytes)
+            
+        }
     });
     root_pk
 }
@@ -220,11 +185,12 @@ fn read_effective_slice(buf: &mut [u8], len: usize) -> &[u8] {
 }
 
 
-
 fn main() {
     let start = env::cycle_count();
 
     let cert_chain: Vec<CertificateData> = env::read();
+    let crl_data: Vec<CrlData> = env::read();
+    let now: u64 = env::read();
     let (
         econtent_len,
         salt_len,
@@ -308,11 +274,10 @@ fn main() {
 
     };*/
 
-    let trusted_pk = verify_chain(&cert_chain);
+    let trusted_pk = verify_chain(&cert_chain, &crl_data, now);
     let subject = &cert_chain[0].subject;
     let common_name = extract_cf_field(subject).expect("failed to extract common_name field value");
-    println!("salt: {:?}\n",salt);
-    println!("\ncn {:?}", common_name);
+
     let salted_cf = keccak256(common_name, salt);
     println!("\nsaltedCF: {:?}",hex::encode(&salted_cf));
 

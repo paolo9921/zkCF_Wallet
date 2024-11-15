@@ -1,4 +1,4 @@
-use pkcs7_core::pkcs7::{load_pkcs7, Certificate, CertificateData, PublicKey};
+use pkcs7_core::pkcs7::{load_pkcs7, SignedData, Certificate, CertificateData, CrlData, PublicKey};
 
 use alloy::{
     network::{EthereumWallet, TransactionBuilder},
@@ -66,6 +66,7 @@ struct Args {
 
 pub fn prove_pkcs7_verification(
     chain_data: &Vec<CertificateData>, //Vec<CertificateData>,
+    crl_data: &Vec<CrlData>,
     econtent: &Vec<u8>,
     salt: &Vec<u8>,
     msg: &Vec<u8>,
@@ -101,6 +102,7 @@ pub fn prove_pkcs7_verification(
     let mut env_builder = ExecutorEnv::builder();
 
     env_builder.write(&chain_data).unwrap();
+    env_builder.write(&crl_data).unwrap();
     env_builder.write(&now).unwrap();
     env_builder.write(&lengths).unwrap();
     env_builder.write_slice(&econtent);
@@ -133,56 +135,69 @@ pub fn extract_certificate_data(
     certs: &[Certificate],
     subj_cert: &Certificate,
 ) -> Vec<CertificateData> {
-
-    let mut certs_chain_data: Vec<CertificateData> = Vec::new();
-
-    // hashmap for easily map a subject to his cert
-    let cert_map: HashMap<Vec<u8>, &Certificate> = certs
-        .iter()
-        .map(|cert| (cert.tbs_certificate.subject.to_der(), cert))
-        .collect();
-
-    // hashset to track visisted certs
-    let mut visited_certs = HashSet::new();
-    
+    let mut chain_data = Vec::new();
     let mut current_cert = subj_cert;
-
-    // WARNING: POSSIBLE LOOP, must handle this
+    let mut visited_count = 0;
+    let max_chain_length = 10; 
+    
     loop {
+        // Safety check for maximum chain length
+        if visited_count >= max_chain_length {
+            panic!("Certificate chain exceeds maximum length");
+        }
+        visited_count += 1;
 
-        let cert_id = current_cert.tbs_certificate.subject.to_der();
-        if !visited_certs.insert(cert_id.clone()) {
-            // if already visited exit
+        let issuer_cert = if current_cert.tbs_certificate.subject == current_cert.tbs_certificate.issuer {
+            current_cert // Self-signed certificate (root)
+        } else {
+            let issuer_name = current_cert.tbs_certificate.issuer.to_der();
+            certs.iter()
+                .find(|cert| cert.tbs_certificate.subject.to_der() == issuer_name)
+                .unwrap_or_else(|| panic!(
+                    "Issuer certificate not found for cert: {:?}",
+                    current_cert.tbs_certificate.subject
+                ))
+        };
+
+        // Check for loops by comparing with already processed certificates
+        if chain_data.iter().any(|cert_data: &CertificateData| cert_data.subject == current_cert.tbs_certificate.subject.to_der()) {
             panic!(
-                "Loop in certificate chain. Found 2 times certificate: {:?}",
+                "Loop detected in certificate chain at cert: {:?}",
                 current_cert.tbs_certificate.subject
             );
         }
-        // find the issuer's certificate in the map
-        let issuer_cert = cert_map
-            .get(&current_cert.tbs_certificate.issuer.to_der())
-            .ok_or_else(|| {
-                format!(
-                    "Issuer certificate not found for cert {:?}",
-                    current_cert.tbs_certificate.subject
-                )
-            })
-            .expect("failed to get issuer_cert");
 
-        //println!("\ncurrent cert: {:?} \nissuer cert: {:?}",current_cert.tbs_certificate.serial_number,issuer_cert.tbs_certificate.serial_number);
-
+        // Extract and store certificate data
         let cert_data = current_cert.extract_data(issuer_cert);
-        certs_chain_data.push(cert_data);
+        chain_data.push(cert_data);
 
-        // if root CA, stop
+        // Stop if we've reached the root certificate
         if current_cert.tbs_certificate.subject == current_cert.tbs_certificate.issuer {
             break;
         }
 
         current_cert = issuer_cert;
     }
-    //println!("certs chain_data: {:?}\n",certs_chain_data);
-    certs_chain_data
+
+    chain_data
+}
+
+// certificate and CRL data extraction
+pub fn extract_validation_data(
+    signed_data: &SignedData,
+    subject_cert: &Certificate,
+) -> (Vec<CertificateData>, Vec<CrlData>) {
+    let chain_data = extract_certificate_data(&signed_data.certs, subject_cert);
+    // Find the root certificate for CRL verification
+    let root_cert = signed_data.certs.iter()
+        .find(|cert| cert.tbs_certificate.subject == cert.tbs_certificate.issuer)
+        .expect("Root certificate not found");
+
+    let crl_data = signed_data.crls.iter()
+        .map(|crl| crl.extract_data(root_cert))
+        .collect();
+
+    (chain_data, crl_data)
 }
 
 pub fn convert_to_bytes(str_bytes: Vec<u8>) -> Vec<u8> {
@@ -216,42 +231,7 @@ fn extract_cf_field(subject: &[u8]) -> Result<&[u8], &'static str> {
     Err("OID sequence not found in subject")
 }
 
-/*
-fn deploy_contract(
-    rpc_url: &str,
-    cf: &[u8],
-    salt: &[u8],
-) -> Result<(), Box<dyn Error>> {
-    let project_dir = env::current_dir()?;
-    // create temp file to pass value for constructor to contract deploy script
-    let mut cf_temp_file = NamedTempFile::new_in(&project_dir)?;
-    cf_temp_file.as_file_mut().write_all(&cf)?;
-    let cf_temp_path = cf_temp_file.path().to_str().unwrap().to_string();
 
-    let mut salt_temp_file = NamedTempFile::new_in(&project_dir)?;
-    salt_temp_file.as_file_mut().write_all(&salt)?;
-    let salt_temp_path = salt_temp_file.path().to_str().unwrap().to_string();
-
-    std::fs::set_permissions(&salt_temp_path, std::fs::Permissions::from_mode(0o600))?;
-    std::fs::set_permissions(&salt_temp_path, std::fs::Permissions::from_mode(0o600))?;
-
-    // Pass the file paths to the deploy script via environment variables
-    let mut cmd = Command::new("forge");
-    cmd.arg("script")
-        .arg("--rpc-url")
-        .arg(rpc_url)
-        .arg("--broadcast")
-        .arg("script/Deploy.s.sol")
-        //.arg("RiscZeroCFWalletDeploy")
-        .env("CF_FILE_PATH", &cf_temp_path)
-        .env("SALT_FILE_PATH", &salt_temp_path);
-
-    let status = cmd.status().expect("Failed to start deploy process");
-    if !status.success() {
-        return Err(format!("Deploy script exited with status: {}",status).into());
-    }
-    Ok(())
-}*/
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -280,10 +260,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let subject_cert = Arc::new(subject_cert);
 
-    // is ok to extract here CF ???
-    let subj = subject_cert.tbs_certificate.subject.to_der();
-    let cf = extract_cf_field(&subj).expect("failed to extract common_name field value");
-
     let salt = hex::decode(&args.salt)?;
     println!("\nsalt: {:?}",salt);
     if salt.len() > 32 {
@@ -310,9 +286,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pkcs7.content_bytes.clone() //this is the data of the signed document
     };
     let msg = Arc::new(msg_data);
+    
     // VERIFY CHAIN
-    let chain_data = extract_certificate_data(&pkcs7.content.certs, &subject_cert);
+    let (chain_data, crl_data) = extract_validation_data(&pkcs7.content, &subject_cert);
     let chain_data = Arc::new(chain_data);
+    let crl_data = Arc::new(crl_data);
+
 
     let econtent_addr_bytes = convert_to_bytes(pkcs7.content.content_info.e_content.clone());
     let econtent_addr_bytes = Arc::new(econtent_addr_bytes);
@@ -320,6 +299,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clone `Arc` pointers for use in the closure
     let chain_data_cloned = Arc::clone(&chain_data);
+    let crl_data_cloned = Arc::clone(&crl_data);
     let econtent_addr_bytes_cloned = Arc::clone(&econtent_addr_bytes);
     let salt_cloned = Arc::clone(&salt);
     let msg_cloned = Arc::clone(&msg);
@@ -334,7 +314,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             PublicKey::Rsa { modulus, exponent } => {
                 prove_pkcs7_verification(
-                    &*chain_data_cloned,              
+                    &*chain_data_cloned,  
+                    &*crl_data_cloned,            
                     &*econtent_addr_bytes_cloned,    
                     &*salt_cloned,                    
                     &*msg_cloned,                     
@@ -348,6 +329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             PublicKey::Ecdsa { point } => {
                 prove_pkcs7_verification(
                     &*chain_data_cloned,              // &CertificateData
+                    &*crl_data_cloned,
                     &*econtent_addr_bytes_cloned,    // &Vec<u8>
                     &*salt_cloned,                    // &Vec<u8>
                     &*msg_cloned,                     // &Vec<u8>
@@ -372,17 +354,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // build calldata to send to smart contract
     let calldata = CfWallet::verifyAndTransferCall {
-        journal: journal.into(),
+        journal: journal.clone().into(),
         seal: seal.into(), 
     };
-
-    println!("\ncalldata[ \njournal: {:?}\nseal: {:?}\n]\n",calldata.journal,calldata.seal);
-
     
     // Create an alloy provider for that private key and URL.
     let wallet = EthereumWallet::from(args.eth_wallet_private_key);
     let provider = ProviderBuilder::new()
         .with_recommended_fillers()
+        //.with_gas_limit_multiplier(1.1)
         .wallet(wallet)
         .on_http(args.rpc_url);
     
