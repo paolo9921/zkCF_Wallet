@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 import {ImageID} from "./ImageID.sol"; // auto-generated contract after running `cargo build`.
 import {CA_Storage} from "./CA_Storage.sol";
+import "forge-std/Test.sol";
 
 contract CfWallet {
     
@@ -32,7 +33,7 @@ contract CfWallet {
     receive() external payable {}
 
     //transfer the found to the address contained in the signed document
-    function transfer(address payable _to) public {
+    function transfer(address payable _to) internal {
         //require(verify_proof(proof, saltedCf, _to));
         emit LogTransfer("transfer to ",_to);
 
@@ -46,13 +47,15 @@ contract CfWallet {
     function verifyAndTransfer(bytes calldata journal, bytes calldata seal) public {
         require(journal.length == 308, "Invalid journal length");
 
-        verifier.verify(seal, imageId, sha256(journal));
-        //emit Log("Verifier verification passed");
+        //verifier.verify(seal, imageId, sha256(journal));
         
-        to = bytesToAddress(journal[0:20]);
-
-        bytes32 extractedCf = bytes32(journal[20:52]);
+        bytes calldata addressBytes = journal[:20];
+        bytes calldata cfBytes = journal[20:52];
         bytes calldata rootPubKey = journal[52:];
+        
+        to = bytesToAddress(addressBytes);
+        bytes32 extractedCf = bytes32(cfBytes);
+
 
         bool is_journal_valid = verifyJournalData(extractedCf, rootPubKey);
         require(is_journal_valid, "Incorrect journal data");
@@ -62,13 +65,11 @@ contract CfWallet {
     }
 
 
-
-    function verifyJournalData(bytes32 extractedCf, bytes calldata rootPubKey) private returns (bool verified){
+    function verifyJournalData(bytes32 extractedCf, bytes calldata rootPubKey) private view returns (bool verified){
         
         // Check that extracted CF matches the stored salted CF
         if (extractedCf != saltedCf) {
-            emit LogBytes32(extractedCf);
-            revert InvalidCf(extractedCf);
+            revert InvalidCf("exteacted", extractedCf);
         }
 
         // Verify the root public key through CA storage
@@ -79,7 +80,7 @@ contract CfWallet {
         return true;
     }
 
-    error InvalidCf(bytes32 received);//, bytes32 expected);
+    error InvalidCf(string msg, bytes32 received);//, bytes32 expected);
     error InvalidRootPublicKey(bytes invalidKey);
 
 

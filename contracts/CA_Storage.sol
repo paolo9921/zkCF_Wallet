@@ -6,13 +6,12 @@ contract CA_Storage {
     address private owner;
     mapping(bytes32 => bool) public publicKeys;
     //bytes[] public somePublicKeys;
+    uint256 public publicKeyCount = 0;
 
 
-    event NewPublicKeysStored(bytes[] publicKey);
     event NewPublicKeysStored(bool result);
     event LogPubkey(bytes32 public_Key);
     event LogPKBytes(bytes pk_bytes);
-    event LogAdded(bool value);
 
 
     constructor(){//address _deployer) {
@@ -20,14 +19,15 @@ contract CA_Storage {
         owner = msg.sender;
     }
     /**
-    * Add public Keys array to storage
-    * param newPubKeys array of pub key to add (bytes)
+    * @dev Add public Keys array to storage
+    * @param newPubKeys array of (bytes) pub key to add
      */
     function addPublicKeys(bytes[] calldata newPubKeys) external onlyOwner {
         for (uint256 i = 0; i < newPubKeys.length ; i++) {
             bytes32 keyHash = keccak256(newPubKeys[i]);
             // if hash of the pubkey doesn't exists in mapping, add
             if (!publicKeys[keyHash]) {
+                publicKeyCount++;
                 publicKeys[keyHash] = true;
             }
 
@@ -42,7 +42,7 @@ contract CA_Storage {
     }
 
     modifier onlyOwner(){
-        require(owner == msg.sender, "Ownership Assertion: Caller of the function is not the owner.");
+        require(owner == msg.sender, "Ownership Assertion: Caller is not the owner");
         _;
     }
 
@@ -51,6 +51,27 @@ contract CA_Storage {
     
     function getOwner() public view returns (address) {
         return owner;   
+    }
+
+    /**
+     * @dev Modificatore per verificare se il chiamante è un smart contract.
+     */
+    modifier onlyContract() {
+        require(isContract(msg.sender), "CfWallet: caller is not a contract");
+        _;
+    }
+
+    /**
+     * @dev Funzione interna per verificare se un indirizzo è un contratto.
+     * @param _addr L'indirizzo da verificare.
+     * @return True se l'indirizzo è un contratto, altrimenti false.
+     */
+    function isContract(address _addr) internal view returns (bool) {
+        uint32 size;
+        assembly {
+            size := extcodesize(_addr)
+        }
+        return (size > 0);
     }
 
     
