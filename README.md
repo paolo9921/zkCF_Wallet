@@ -1,7 +1,7 @@
 
 # CF Wallet RISC ZERO
 
-The project goal is to build an Ethereum application capable of manage a wallet using your own Codice Fiscale (tax ID code). The system uses [RISC Zero] as a coprocessor to the smart contract application, moving the computationally-intensive process off-chain in the zkVM, saving gas fees and maintaining core values of decentralization.
+The project goal is to build an Ethereum application capable of manage a wallet using your own Codice Fiscale (Italian tax ID code). The system uses [RISC Zero] as a coprocessor to the smart contract application, moving the computationally-intensive process off-chain in the zkVM, saving gas fees and maintaining core values of decentralization.
 
 We can trust the off-chain computation thanks to verifiable computations granted by ZK technology that generates a proof about the correct execution of Rust code. With this proof, anyone can verify that the computation ran correctly and produced the associated outputs.
 
