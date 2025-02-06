@@ -34,7 +34,7 @@ contract CfWallet {
 
     //transfer the found to the address contained in the signed document
     function transfer(address payable _to) internal {
-        //require(verify_proof(proof, saltedCf, _to));
+        require(verify_proof(proof, saltedCf, _to));
         emit LogTransfer("transfer to ",_to);
 
         payable(_to).transfer(address(this).balance);
@@ -47,7 +47,7 @@ contract CfWallet {
     function verifyAndTransfer(bytes calldata journal, bytes calldata seal) public {
         require(journal.length == 308, "Invalid journal length");
 
-        //verifier.verify(seal, imageId, sha256(journal));
+        verifier.verify(seal, imageId, sha256(journal));
         
         bytes calldata addressBytes = journal[:20];
         bytes calldata cfBytes = journal[20:52];
